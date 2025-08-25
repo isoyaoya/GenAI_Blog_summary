@@ -42,8 +42,9 @@ pip install boto3 requests beautifulsoup4 mcp
 
 ### 1. 克隆项目
 ```bash
-git clone <repository-url>
-cd aws-blog-summarizer
+git clone https://github.com/isoyaoya/GenAI_Blog_summary.git
+cd GenAI_Blog_summary
+
 ```
 
 ### 2. 安装依赖
