@@ -7,7 +7,7 @@
 - 🎯 **智能筛选**：基于客户信息自动判断文章相关性
 - 📝 **自动摘要**：生成300字左右的中文摘要
 - 🔄 **多数据源**：优先使用MCP获取内容，失败时自动回退到HTML解析
-- � **自统计分析**：提供筛选效率和处理统计
+- 📊 **统计分析**：提供筛选效率和处理统计
 - 🎯 **PowerPoint演示文稿生成**：自动生成专业的PowerPoint演示文稿
 - 📊 **双重输出格式**：同时支持Markdown和PowerPoint格式输出
 
@@ -32,12 +32,18 @@ pip install boto3 requests beautifulsoup4 mcp python-pptx
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 克隆项目
+```bash
+git clone https://github.com/isoyaoya/GenAI_Blog_summary.git
+cd GenAI_Blog_summary
+```
+
+### 2. 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 配置AWS凭证
+### 3. 配置AWS凭证
 ```bash
 # 使用AWS CLI
 aws configure
@@ -48,7 +54,7 @@ export AWS_SECRET_ACCESS_KEY=your_secret_key
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-### 3. 配置客户信息
+### 4. 配置客户信息
 编辑 `customer_info.py` 文件，填入您的客户信息：
 
 ```python
