@@ -24,6 +24,20 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from customer_info import customer_description, AI_application_description, AI_workload_Description
 
+# 导入PowerPoint生成功能
+try:
+    from powerpoint_generator import (
+        PowerPointGenerator, 
+        BlogSummaryData, 
+        PresentationMetadata, 
+        TemplateConfig,
+        is_powerpoint_available
+    )
+    POWERPOINT_ENABLED = True
+except ImportError:
+    POWERPOINT_ENABLED = False
+    print("警告：PowerPoint生成功能不可用。请安装python-pptx: pip install python-pptx")
+
 class AWSBlogSummarizerOptimized:
     def __init__(self, target_month="2025-08"):
         self.base_url = "https://aws.amazon.com/blogs/machine-learning/"
@@ -304,11 +318,10 @@ AI应用场景：{self.ai_application_description}
 标题：{title}
 内容：{content}
 
-判断标准（必须同时满足多个条件才能判定为感兴趣）：
+判断标准：
 
 核心匹配度评估：
 1. **业务场景匹配**：文章的应用场景是否与客户的核心业务场景高度相关？
-   - 即使使用相同的AWS服务，但应用领域完全不同也应判定为不感兴趣
 
 2. **技术方案相关性**：文章介绍的技术方案是否能直接应用到客户的业务中？
    - 解决的技术问题是否是客户会遇到的问题
@@ -317,7 +330,7 @@ AI应用场景：{self.ai_application_description}
 
 注意事项：
 - 仅仅使用相同的AWS服务，但应用场景完全不同的文章应判定为不感兴趣
-- 文章必须在业务场景、技术方案、实际价值三个维度都有较高相关性才能判定为感兴趣
+- 文章最好在业务场景、技术方案、实际价值三个维度都有较高相关性才能判定为感兴趣
 
 
 请只回答数字：
@@ -475,6 +488,24 @@ def main():
         help='扫描的博客页面数量 (默认: 2)'
     )
     
+    parser.add_argument(
+        '--ppt', '--powerpoint',
+        action='store_true',
+        help='生成PowerPoint演示文稿（同时生成Markdown和PowerPoint）'
+    )
+    
+    parser.add_argument(
+        '--ppt-only',
+        action='store_true',
+        help='仅生成PowerPoint演示文稿（不生成Markdown）'
+    )
+    
+    parser.add_argument(
+        '--ppt-template',
+        type=str,
+        help='指定PowerPoint模板配置文件路径'
+    )
+    
     args = parser.parse_args()
     
     # 验证月份格式
@@ -500,67 +531,138 @@ def main():
     print(f"找到 {len(target_month_posts)} 篇{summarizer.target_month}的文章\n")
     
     if target_month_posts:
-        # 创建摘要文件
-        output_filename = f"aws_blog_summaries_{summarizer.target_month.replace('-', '_')}_optimized.md"
-        with open(output_filename, "w", encoding="utf-8") as f:
-            f.write(f"# AWS机器学习博客摘要 - {summarizer.target_month} (智能筛选版本)\n\n")
-            f.write(f"本文档包含了AWS机器学习博客中{summarizer.target_month}发布的文章摘要。\n")
-            f.write("基于客户信息智能筛选感兴趣的文章，使用AWS Knowledge MCP Server获取内容。\n\n")
-            
-            interested_count = 0
-            total_processed = 0
-            
-            for i, post in enumerate(target_month_posts, 1):
-                print(f"正在处理第 {i}/{len(target_month_posts)} 篇文章...")
-                print(f"标题: {post['title']}")
-                
-                # 获取文章内容
-                article_data = summarizer.get_article_content(post['url'])
-                if article_data and article_data['content']:
-                    print(f"内容长度: {len(article_data['content'])} 字符")
-                    
-                    # 评估客户兴趣度
-                    print("正在评估客户兴趣度...")
-                    interest_score = summarizer.assess_customer_interest(article_data['title'], article_data['content'])
-                    
-                    if interest_score == 1:
-                        print("✓ 客户感兴趣，生成摘要...")
-                        interested_count += 1
-                        
-                        # 生成摘要
-                        summary = summarizer.generate_summary(article_data['title'], article_data['content'])
-                        
-                        # 写入文件
-                        f.write(f"## {interested_count}. {article_data['title']}\n\n")
-                        f.write(f"**发布日期：** {post['date']}\n")
-                        f.write(f"**原文链接：** {post['url']}\n")
-                        f.write(f"**兴趣度评分：** ✓ 感兴趣\n\n")
-                        f.write(f"{summary}\n\n")
-                        f.write("---\n\n")
-                        
-                        print("摘要生成完成\n")
-                    else:
-                        print("✗ 客户不感兴趣，跳过摘要生成\n")
-                    
-                    total_processed += 1
-                else:
-                    print("无法获取文章内容\n")
-            
-            # 添加统计信息
-            f.write(f"\n## 统计信息\n\n")
-            f.write(f"- 总共处理文章数：{total_processed}\n")
-            f.write(f"- 客户感兴趣文章数：{interested_count}\n")
-            if total_processed > 0:
-                f.write(f"- 筛选效率：{interested_count/total_processed*100:.1f}%\n")
-            else:
-                f.write(f"- 筛选效率：0%\n")
+        # 准备输出文件名
+        base_filename = f"aws_blog_summaries_{summarizer.target_month.replace('-', '_')}_optimized"
+        md_filename = f"{base_filename}.md"
+        ppt_filename = f"{base_filename}.pptx"
         
-        print(f"处理完成！")
+        # 收集感兴趣的文章数据
+        interested_summaries = []
+        interested_count = 0
+        total_processed = 0
+        
+        # 处理文章并收集数据
+        for i, post in enumerate(target_month_posts, 1):
+            print(f"正在处理第 {i}/{len(target_month_posts)} 篇文章...")
+            print(f"标题: {post['title']}")
+            
+            # 获取文章内容
+            article_data = summarizer.get_article_content(post['url'])
+            if article_data and article_data['content']:
+                print(f"内容长度: {len(article_data['content'])} 字符")
+                
+                # 评估客户兴趣度
+                print("正在评估客户兴趣度...")
+                interest_score = summarizer.assess_customer_interest(article_data['title'], article_data['content'])
+                
+                if interest_score == 1:
+                    print("✓ 客户感兴趣，生成摘要...")
+                    interested_count += 1
+                    
+                    # 生成摘要
+                    summary = summarizer.generate_summary(article_data['title'], article_data['content'])
+                    
+                    # 收集数据用于PowerPoint生成
+                    if POWERPOINT_ENABLED and (args.ppt or args.ppt_only):
+                        summary_data = BlogSummaryData(
+                            title=article_data['title'],
+                            date=post['date'],
+                            url=post['url'],
+                            summary=summary,
+                            interest_score=interest_score,
+                            content_length=len(article_data['content'])
+                        )
+                        interested_summaries.append(summary_data)
+                    
+                    print("摘要生成完成\n")
+                else:
+                    print("✗ 客户不感兴趣，跳过摘要生成\n")
+                
+                total_processed += 1
+            else:
+                print("无法获取文章内容\n")
+        
+        # 生成Markdown文件（除非指定仅生成PowerPoint）
+        if not args.ppt_only:
+            print("正在生成Markdown文件...")
+            with open(md_filename, "w", encoding="utf-8") as f:
+                f.write(f"# AWS机器学习博客摘要 - {summarizer.target_month} (智能筛选版本)\n\n")
+                f.write(f"本文档包含了AWS机器学习博客中{summarizer.target_month}发布的文章摘要。\n")
+                f.write("基于客户信息智能筛选感兴趣的文章，使用AWS Knowledge MCP Server获取内容。\n\n")
+                
+                # 写入感兴趣的文章摘要
+                for i, summary_data in enumerate(interested_summaries, 1):
+                    f.write(f"## {i}. {summary_data.title}\n\n")
+                    f.write(f"**发布日期：** {summary_data.date}\n")
+                    f.write(f"**原文链接：** {summary_data.url}\n")
+                    f.write(f"**兴趣度评分：** ✓ 感兴趣\n\n")
+                    f.write(f"{summary_data.summary}\n\n")
+                    f.write("---\n\n")
+                
+                # 添加统计信息
+                f.write(f"\n## 统计信息\n\n")
+                f.write(f"- 总共处理文章数：{total_processed}\n")
+                f.write(f"- 客户感兴趣文章数：{interested_count}\n")
+                if total_processed > 0:
+                    f.write(f"- 筛选效率：{interested_count/total_processed*100:.1f}%\n")
+                else:
+                    f.write(f"- 筛选效率：0%\n")
+        
+        # 生成PowerPoint文件（如果启用）
+        if POWERPOINT_ENABLED and (args.ppt or args.ppt_only):
+            print("正在生成PowerPoint演示文稿...")
+            try:
+                # 准备演示文稿元数据
+                metadata = PresentationMetadata(
+                    target_month=summarizer.target_month,
+                    generation_date=datetime.now().strftime("%Y-%m-%d"),
+                    total_articles=total_processed,
+                    interested_articles=interested_count,
+                    filtering_efficiency=interested_count/total_processed*100 if total_processed > 0 else 0,
+                    customer_info={
+                        'company': '合合信息',
+                        'description': customer_description[:200] + "..." if len(customer_description) > 200 else customer_description
+                    }
+                )
+                
+                # 加载模板配置
+                template_config = None
+                if args.ppt_template:
+                    from powerpoint_generator import SlideTemplateManager
+                    template_config = SlideTemplateManager.load_custom_template(args.ppt_template)
+                    if template_config is None:
+                        print("警告：无法加载自定义模板，使用默认模板")
+                
+                # 创建PowerPoint生成器
+                ppt_generator = PowerPointGenerator(template_config)
+                
+                # 生成演示文稿
+                if ppt_generator.create_presentation(interested_summaries, metadata):
+                    if ppt_generator.save_presentation(ppt_filename):
+                        print(f"PowerPoint演示文稿已生成: {ppt_filename}")
+                    else:
+                        print("保存PowerPoint文件失败")
+                else:
+                    print("生成PowerPoint演示文稿失败")
+                    
+            except Exception as e:
+                print(f"PowerPoint生成过程中出现错误: {e}")
+                print("继续使用Markdown输出...")
+        elif args.ppt or args.ppt_only:
+            print("警告：PowerPoint功能不可用，请安装python-pptx库")
+        
+        # 输出结果总结
+        print(f"\n处理完成！")
         print(f"总共处理了 {total_processed} 篇文章")
         print(f"其中 {interested_count} 篇被判断为客户感兴趣")
         if total_processed > 0:
             print(f"筛选效率：{interested_count/total_processed*100:.1f}%")
-        print(f"请查看 {output_filename} 文件")
+        
+        # 显示生成的文件
+        if not args.ppt_only:
+            print(f"Markdown文件: {md_filename}")
+        if POWERPOINT_ENABLED and (args.ppt or args.ppt_only):
+            print(f"PowerPoint文件: {ppt_filename}")
     else:
         print(f"没有找到{summarizer.target_month}的博客文章")
 
